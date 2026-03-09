@@ -1,6 +1,7 @@
 /* ============================================================
    Universo Infinito — Magical Particle Heart
-   ============================================================ */
+    ============================================================ */
+console.log("Universo Infinito v8.0 - Cargando...");
 
 /**
  * BIENVENIDO AL CÓDIGO
@@ -92,7 +93,9 @@ const nebulaMat = new THREE.ShaderMaterial({
         }
     `
 });
-scene.add(new THREE.Points(nebulaGeo, nebulaMat));
+const nebulaPoints = new THREE.Points(nebulaGeo, nebulaMat);
+nebulaPoints.renderOrder = -1; // Render behind the heart
+scene.add(nebulaPoints);
 
 // ── 4. HEART PARTICLE SYSTEM ───────────────────────────────────
 const generateHeartGeometry = () => {
@@ -126,23 +129,27 @@ const generateHeartGeometry = () => {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setAttribute('sz', new THREE.BufferAttribute(sz, 1));
     geo.setAttribute('phase', new THREE.BufferAttribute(phase, 1));
+    geo.setAttribute('seed', new THREE.BufferAttribute(new Float32Array(N).map(() => Math.random()), 1));
     return geo;
 };
 
 const heartMat = new THREE.ShaderMaterial({
     uniforms: {
         uTime: { value: 0 },
+        uReveal: { value: 0 },
         uSize: { value: CONFIG.HEART_SIZE },
         uMouse: { value: new THREE.Vector2(0, 0) },
         uGravity: { value: CONFIG.GRAVITY_STRENGTH }
     },
     vertexShader: `
         uniform float uTime;
+        uniform float uReveal;
         uniform float uSize;
         uniform vec2 uMouse;
         uniform float uGravity;
         attribute float sz;
         attribute float phase;
+        attribute float seed;
         varying vec3 vColor;
         varying float vPhase;
         void main() {
@@ -150,6 +157,11 @@ const heartMat = new THREE.ShaderMaterial({
             vPhase = phase;
             vec3 p = position;
             
+            // GRADUAL REVEAL
+            if (seed > uReveal) {
+                gl_Position = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
             // GRAVITY EFFECT: Displace towards mouse
             vec4 mvPos = modelViewMatrix * vec4(p, 1.0);
             vec4 mousePos = vec4(uMouse.x * 20.0, uMouse.y * 20.0, 0.0, 1.0);
@@ -187,6 +199,15 @@ const heartMat = new THREE.ShaderMaterial({
 const heart = new THREE.Points(generateHeartGeometry(), heartMat);
 heart.position.y = -5;
 scene.add(heart);
+
+// OrbitControls
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.rotateSpeed = 0.5;
+controls.enablePan = false;
+controls.minDistance = 20;
+controls.maxDistance = 150;
 
 // ── 5. BACKGROUND STARS & COMETS ──────────────────────────────
 const starCount = 5000;
@@ -232,9 +253,17 @@ class Comet {
         if ((this.life -= dt * 0.6) <= 0 || this.pos.y < -90) this.reset();
     }
 }
-const comets = Array.from({ length: 6 }, () => new Comet());
+const comets = Array.from({ length: 8 }, () => new Comet());
 const cometGeo = new THREE.BufferGeometry();
-const cometPoints = new THREE.Points(cometGeo, new THREE.PointsMaterial({ size: 1.5, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending }));
+const cometMat = new THREE.PointsMaterial({
+    size: 2.5,
+    color: 0xffffff,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    opacity: 0.8
+});
+const cometPoints = new THREE.Points(cometGeo, cometMat);
 scene.add(cometPoints);
 
 // ── 6. INTERACTION & ANIMATION ───────────────────────────────
@@ -268,24 +297,33 @@ function animate() {
         setTimeout(() => { if (loader) loader.style.display = 'none'; }, 1500);
     }
 
+    if (introFinished && heartMat.uniforms.uReveal.value < 1.0) {
+        heartMat.uniforms.uReveal.value += 0.005;
+    }
+
     heartMat.uniforms.uTime.value = t * CONFIG.BREATHING_SPEED;
     heartMat.uniforms.uMouse.value.set(mouse.x, mouse.y);
     starMat.uniforms.uTime.value = t;
     nebulaMat.uniforms.uTime.value = t;
 
-    heart.rotation.y += (mouse.x * 0.4 - heart.rotation.y) * 0.05 + CONFIG.AUTO_SPIN;
-    heart.rotation.x += ((-mouse.y * 0.2) - heart.rotation.x) * 0.05;
+    // OrbitControls updates the camera.
+    // We keep the auto-spin always active or only when not interacting.
+    heart.rotation.y += CONFIG.AUTO_SPIN;
 
-    camera.position.x += (mouse.x * 4.0 - camera.position.x) * 0.03;
-    camera.position.y += (mouse.y * 2.5 - camera.position.y) * 0.03;
-    camera.lookAt(0, 0, 0);
+    controls.update();
 
     const cPos = [];
     comets.forEach(c => {
         c.update(dt);
         if (c.active) {
             cPos.push(c.pos.x, c.pos.y, c.pos.z);
-            for (let j = 1; j < 10; j++) cPos.push(c.pos.x - c.vel.x * j * 0.45, c.pos.y - c.vel.y * j * 0.45, c.pos.z);
+            // Longer and more visible trails
+            for (let j = 1; j < 25; j++) {
+                const trailX = c.pos.x - c.vel.x * j * 0.35;
+                const trailY = c.pos.y - c.vel.y * j * 0.35;
+                const trailZ = c.pos.z - c.vel.z * j * 0.35;
+                cPos.push(trailX, trailY, trailZ);
+            }
         }
     });
     cometGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cPos), 3));
